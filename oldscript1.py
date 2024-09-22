@@ -10,12 +10,9 @@ grid_size = 10
 red_position = (0, 9)  # Goal position
 blue_start_position = (9, 0)  # Start position
 obstacles = [
-    (1,0),(1, 1), (1, 2), (1, 3), (1, 4),  # Vertical wall
-    (2, 4), (3, 4), (4, 4),          # Vertical wall continuation
-    (5, 1), (5, 2), (5, 3), (5, 4),  # Another vertical wall
-    (6, 2), (7, 2),                  # Vertical wall continuation
-    (8, 3),                          # Horizontal blockage
-    (3, 6), (4, 6), (5, 6)           # Additional horizontal obstacles
+    (2, 0), (2, 1), (2, 2), (2, 3), (2, 4),
+    (3, 4), (4, 4), (4, 5), (5, 5), (5, 6),
+    (6, 7), (7,7),(8,8)
 ]
 
 initial_power = 100
@@ -104,7 +101,16 @@ def train_q_learning(episodes, alpha, gamma, epsilon, epsilon_decay):
 
     return Q, reward_history
 
-# Training function for TD-learning with revisit penalty
+# Get policy from Q-table
+def get_policy(Q):
+    policy = np.zeros((grid_size, grid_size, initial_power + 1), dtype=int)
+    for x in range(grid_size):
+        for y in range(grid_size):
+            for power in range(initial_power + 1):
+                policy[x, y, power] = np.argmax(Q[x, y, power])
+    return policy
+
+# Training function for TD-learning with improved action selection
 def train_td_learning(episodes, alpha, gamma, epsilon, epsilon_decay):
     reward_history = []
     for episode in range(1, episodes + 1):
@@ -117,8 +123,7 @@ def train_td_learning(episodes, alpha, gamma, epsilon, epsilon_decay):
         while not done:
             if np.random.random() > epsilon:
                 # Exploit the learned value function (choose action with highest value for next state)
-                best_action = None
-                best_value = float('-inf')
+                action_values = []
 
                 # Search through all actions and evaluate the value of the next state
                 for a, action_name in enumerate(actions):
@@ -130,11 +135,10 @@ def train_td_learning(episodes, alpha, gamma, epsilon, epsilon_decay):
                         max(0, min(grid_size - 1, new_position[0])),
                         max(0, min(grid_size - 1, new_position[1]))
                     )
-                    if V[new_position[0], new_position[1], state[2] - 1] > best_value:
-                        best_value = V[new_position[0], new_position[1], state[2] - 1]
-                        best_action = a
+                    new_power = state[2] - 1  # Deduct power for each move
+                    action_values.append(V[new_position[0], new_position[1], max(0, new_power)])
 
-                action = best_action
+                action = np.argmax(action_values)  # Select the action that leads to the state with the highest value
             else:
                 action = np.random.randint(0, len(actions))  # Explore new actions randomly
 
@@ -163,11 +167,13 @@ def train_td_learning(episodes, alpha, gamma, epsilon, epsilon_decay):
             if new_position == red_position or new_power <= 0:
                 done = True
 
+            # Update TD value with one-step look-ahead
             update_td_value(state, reward, new_state, alpha, gamma)
             state = new_state
 
+            # Decay epsilon
             if epsilon > 0.1:
-                epsilon = max(0.1, epsilon * epsilon_decay)  # Decay epsilon
+                epsilon = max(0.1, epsilon * epsilon_decay)
 
         reward_history.append(total_reward)
         if episode % 1000 == 0:
@@ -175,13 +181,25 @@ def train_td_learning(episodes, alpha, gamma, epsilon, epsilon_decay):
 
     return V, reward_history
 
-# Get policy from Q-table
-def get_policy(Q):
+# Get policy from Value function for TD-learning
+def get_policy_from_value(V):
     policy = np.zeros((grid_size, grid_size, initial_power + 1), dtype=int)
     for x in range(grid_size):
         for y in range(grid_size):
             for power in range(initial_power + 1):
-                policy[x, y, power] = np.argmax(Q[x, y, power])
+                action_values = []
+                for a, action_name in enumerate(actions):
+                    new_position = (
+                        x + action_dict[action_name][0],
+                        y + action_dict[action_name][1]
+                    )
+                    new_position = (
+                        max(0, min(grid_size - 1, new_position[0])),
+                        max(0, min(grid_size - 1, new_position[1]))
+                    )
+                    new_power = power - 1
+                    action_values.append(V[new_position[0], new_position[1], max(0, new_power)])
+                policy[x, y, power] = np.argmax(action_values)
     return policy
 
 # Simulate game using the policy
@@ -244,6 +262,7 @@ def visualize_paths(logged_paths, final_path, grid_size, red_position, blue_star
     plt.show()
 
 # Run training for both Q-learning and TD-learning
+# Updated experiment runner to use the corrected TD-learning policy
 def run_experiment():
     episodes = 20000
     alpha = 0.1
@@ -257,7 +276,7 @@ def run_experiment():
 
     # TD-learning
     V, td_reward_history = train_td_learning(episodes, alpha, gamma, epsilon, epsilon_decay)
-    td_policy = get_policy(V)
+    td_policy = get_policy_from_value(V)
 
     # Simulate paths
     q_final_path = simulate_game(q_policy, initial_power)
@@ -279,10 +298,6 @@ def run_experiment():
     # Compare path lengths
     print(f"Q-learning path length: {len(q_final_path)}")
     print(f"TD-learning path length: {len(td_final_path)}")
-
-    # # Print policy tables
-    # print_policy(q_policy, "Q-learning")
-    # print_policy(td_policy, "TD-learning")
 
 # Execute the experiment
 run_experiment()

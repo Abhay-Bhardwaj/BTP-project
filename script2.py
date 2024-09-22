@@ -4,21 +4,56 @@ import matplotlib.patches as patches
 import os
 import time
 from datetime import datetime
+import pandas as pd  
 
 # Environment Initialization
-grid_size = 10
-red_position = (0, 9)  # Goal position
-blue_start_position = (9, 0)  # Start position
+grid_size = 18
+red_position = (0, 17)
+blue_start_position = (17, 0)
+
+# Obstacles (updated and more complex)
 obstacles = [
-    (1,0),(1, 1), (1, 2), (1, 3), (1, 4),  # Vertical wall
-    (2, 4), (3, 4), (4, 4),          # Vertical wall continuation
-    (5, 1), (5, 2), (5, 3), (5, 4),  # Another vertical wall
-    (6, 2), (7, 2),                  # Vertical wall continuation
-    (8, 3),                          # Horizontal blockage
-    (3, 6), (4, 6), (5, 6)           # Additional horizontal obstacles
+    # Horizontal walls
+    (0, 4), (0, 5), (0, 6), (0, 7), (0, 8), (1, 8), (2, 8),
+    # Vertical walls
+    (0, 3), (1, 3), (2, 3), (3, 3), (4, 3), (5, 3), (6, 3),
+    # Bottom left obstacles
+    (15, 5), (15, 6), (15, 7), (15, 8), (16, 5), (16, 6),
+    # Upper right obstacles
+    (12, 0), (12, 1),
+    # Bottom right obstacles
+    (15, 12), (15, 13), (15, 14), (15, 15), (15, 16),
+    # Random obstacles in the middle
+    (5, 13), (6, 14), (7, 13),
 ]
 
-initial_power = 100
+
+# Function to visualize the initial map with obstacles
+def visualize_initial_map(grid_size, red_position, blue_start_position, obstacles, title="Initial Map"):
+    fig, ax = plt.subplots(figsize=(7, 7))
+    ax.set_xlim(0, grid_size)
+    ax.set_ylim(0, grid_size)
+    ax.set_xticks(np.arange(0, grid_size + 1, 1))
+    ax.set_yticks(np.arange(0, grid_size + 1, 1))
+    ax.grid(True)
+
+    # Draw goal position
+    ax.add_patch(patches.Circle((red_position[1] + 0.5, grid_size - red_position[0] - 0.5), 0.5, color='red'))
+    
+    # Draw start position
+    ax.add_patch(patches.Circle((blue_start_position[1] + 0.5, grid_size - blue_start_position[0] - 0.5), 0.5, color='green'))
+
+    # Draw obstacles
+    for obstacle in obstacles:
+        ax.add_patch(patches.Rectangle((obstacle[1], grid_size - obstacle[0] - 1), 1, 1, color='black'))
+
+    ax.set_title(title)
+    plt.show()
+
+# Visualize the initial map
+visualize_initial_map(grid_size, red_position, blue_start_position, obstacles)
+
+initial_power = 800
 actions = ['up', 'down', 'left', 'right']
 action_dict = {'up': (-1, 0), 'down': (1, 0), 'left': (0, -1), 'right': (0, 1)}
 
@@ -30,7 +65,7 @@ visit_counter = np.zeros((grid_size, grid_size, initial_power + 1), dtype=int)  
 # Define reward function with visit penalty
 def get_reward(new_position, current_power, visit_count):
     if new_position == red_position:
-        return 200  # Large reward for reaching the goal
+        return 100  # Large reward for reaching the goal
     elif new_position in obstacles:
         return -100  # Large penalty for hitting an obstacle
     else:
@@ -114,21 +149,21 @@ def get_policy(Q):
     return policy
 
 # Training function for TD-learning with improved action selection
-def train_td_learning(episodes, alpha, gamma, epsilon, epsilon_decay):
+# Adjusting TD-learning action selection and exploration strategy
+def train_td_learning(episodes, initial_alpha, gamma, epsilon, epsilon_decay):
     reward_history = []
+    alpha = initial_alpha
     for episode in range(1, episodes + 1):
-        # Random initial state
         state = (np.random.randint(0, grid_size), np.random.randint(0, grid_size), initial_power)
         done = False
         total_reward = 0
-        visit_counter.fill(0)  # Reset visit counter for each episode
+        visit_counter.fill(0)
 
         while not done:
-            if np.random.random() > epsilon:
-                # Exploit the learned value function (choose action with highest value for next state)
+            if np.random.random() < epsilon:  # Epsilon-greedy
+                action = np.random.randint(0, len(actions))
+            else:
                 action_values = []
-
-                # Search through all actions and evaluate the value of the next state
                 for a, action_name in enumerate(actions):
                     new_position = (
                         state[0] + action_dict[action_name][0],
@@ -138,14 +173,10 @@ def train_td_learning(episodes, alpha, gamma, epsilon, epsilon_decay):
                         max(0, min(grid_size - 1, new_position[0])),
                         max(0, min(grid_size - 1, new_position[1]))
                     )
-                    new_power = state[2] - 1  # Deduct power for each move
+                    new_power = state[2] - 1
                     action_values.append(V[new_position[0], new_position[1], max(0, new_power)])
+                action = np.argmax(action_values)
 
-                action = np.argmax(action_values)  # Select the action that leads to the state with the highest value
-            else:
-                action = np.random.randint(0, len(actions))  # Explore new actions randomly
-
-            # Calculate new position and power
             new_position = (
                 state[0] + action_dict[actions[action]][0],
                 state[1] + action_dict[actions[action]][1]
@@ -154,33 +185,31 @@ def train_td_learning(episodes, alpha, gamma, epsilon, epsilon_decay):
                 max(0, min(grid_size - 1, new_position[0])),
                 max(0, min(grid_size - 1, new_position[1]))
             )
-            new_power = state[2] - 1  # Deduct power for each move
+            new_power = state[2] - 1
             if new_position in obstacles:
-                new_power -= 10  # Penalty for hitting an obstacle
+                new_power -= 10
 
-            # Update visit counter for the new position
             visit_counter[new_position[0], new_position[1], max(0, new_power)] += 1
-
-            # Get reward with visit penalty
             reward = get_reward(new_position, new_power, visit_counter[new_position[0], new_position[1], max(0, new_power)])
             total_reward += reward
 
             new_state = (new_position[0], new_position[1], max(0, new_power))
-
             if new_position == red_position or new_power <= 0:
                 done = True
 
-            # Update TD value with one-step look-ahead
             update_td_value(state, reward, new_state, alpha, gamma)
             state = new_state
 
-            # Decay epsilon
-            if epsilon > 0.1:
-                epsilon = max(0.1, epsilon * epsilon_decay)
-
         reward_history.append(total_reward)
+
+        # Epsilon decay
+        epsilon = max(0.1, epsilon * epsilon_decay)
+
+        # Dynamic learning rate adjustment
+        alpha = initial_alpha / (1 + episode / 1000)
+
         if episode % 1000 == 0:
-            print(f"Episode {episode}/{episodes} completed in TD-learning with revisit penalty.")
+            print(f"Episode {episode}/{episodes} completed in TD-learning.")
 
     return V, reward_history
 
@@ -234,8 +263,40 @@ def print_policy(policy, title):
                 print(f"{actions[policy[x, y, power]]:>6}", end=" ")
             print()
 
-# Visualization of paths
-def visualize_paths(logged_paths, final_path, grid_size, red_position, blue_start_position, obstacles, visit_counter=None):
+# Function to create a directory for each run
+def create_run_directory(base_dir="runs"):
+    current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = os.path.join(base_dir, current_time)
+    os.makedirs(run_dir, exist_ok=True)
+    return run_dir
+
+# Save Q-table, policy, reward history, and plots to files
+def save_run_data(Q, policy, reward_history, run_dir, algo_name, q_path=None, td_path=None, plot_fig=None):
+    # Save Q-table/Value function
+    np.save(os.path.join(run_dir, f'{algo_name}_table.npy'), Q)
+    
+    # Save policy
+    np.save(os.path.join(run_dir, f'{algo_name}_policy.npy'), policy)
+    
+    # Save reward history as CSV
+    reward_df = pd.DataFrame(reward_history, columns=["Reward"])
+    reward_df.to_csv(os.path.join(run_dir, f'{algo_name}_reward_history.csv'), index_label="Episode")
+    
+    # Save paths as images if provided
+    if q_path:
+        q_path.savefig(os.path.join(run_dir, f'{algo_name}_path.png'))
+    if td_path:
+        td_path.savefig(os.path.join(run_dir, f'{algo_name}_td_path.png'))
+
+    # Save reward plot if provided
+    if plot_fig:
+        plot_fig.savefig(os.path.join(run_dir, f'{algo_name}_reward_history.png'))
+    
+    print(f"{algo_name} run data saved to: {run_dir}")
+
+# Visualization of paths with the option to save them
+def visualize_paths(logged_paths, final_path, grid_size, red_position, blue_start_position, obstacles, visit_counter=None, title="Path Visualization"):
+    fig, ax = plt.subplots(figsize=(7, 7))
     def draw_grid(ax, path, title, visit_counter=None):
         ax.set_xlim(0, grid_size)
         ax.set_ylim(0, grid_size)
@@ -259,48 +320,54 @@ def visualize_paths(logged_paths, final_path, grid_size, red_position, blue_star
 
         ax.set_title(title)
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 7))
-    draw_grid(ax1, logged_paths, 'Previous Paths', visit_counter)
-    draw_grid(ax2, final_path, 'Optimal Path')
+    draw_grid(ax, final_path, title)
     plt.show()
+    return fig  # Return figure for saving
 
-# Run training for both Q-learning and TD-learning
-# Updated experiment runner to use the corrected TD-learning policy
-def run_experiment():
+# Run training for both Q-learning and TD-learning and save the data
+def run_experiment_and_save():
     episodes = 20000
     alpha = 0.1
     gamma = 0.9
-    epsilon = 0.9
-    epsilon_decay = 0.995
+    epsilon = 0.99
+    epsilon_decay = 0.99
+
 
     # Q-learning
     Q, q_reward_history = train_q_learning(episodes, alpha, gamma, epsilon, epsilon_decay)
     q_policy = get_policy(Q)
+    
+    # Visualize and save Q-learning path
+    q_final_path = simulate_game(q_policy, initial_power)
+    q_path_fig = visualize_paths(q_final_path[:-1], q_final_path, grid_size, red_position, blue_start_position, obstacles, title="Q-learning Path")
 
     # TD-learning
     V, td_reward_history = train_td_learning(episodes, alpha, gamma, epsilon, epsilon_decay)
     td_policy = get_policy_from_value(V)
 
-    # Simulate paths
-    q_final_path = simulate_game(q_policy, initial_power)
+    # Visualize and save TD-learning path
     td_final_path = simulate_game(td_policy, initial_power)
+    td_path_fig = visualize_paths(td_final_path[:-1], td_final_path, grid_size, red_position, blue_start_position, obstacles, title="TD-learning Path")
 
-    # Visualize
-    visualize_paths(q_final_path[:-1], q_final_path, grid_size, red_position, blue_start_position, obstacles)
-    visualize_paths(td_final_path[:-1], td_final_path, grid_size, red_position, blue_start_position, obstacles)
+    # Plot and save reward history comparison
+    reward_fig, ax = plt.subplots()
+    ax.plot(q_reward_history, label='Q-learning')
+    ax.plot(td_reward_history, label='TD-learning')
+    ax.legend()
+    ax.set_title('Reward History')
+    ax.set_xlabel('Episodes')
+    ax.set_ylabel('Total Reward')
 
-    # Plot reward history for comparison
-    plt.plot(q_reward_history, label='Q-learning')
-    plt.plot(td_reward_history, label='TD-learning')
-    plt.legend()
-    plt.title('Reward History')
-    plt.xlabel('Episodes')
-    plt.ylabel('Total Reward')
-    plt.show()
+    # Create run directory
+    run_dir = create_run_directory()
+
+    # Save data and plots
+    save_run_data(Q, q_policy, q_reward_history, run_dir, "Q_learning", q_path=q_path_fig, plot_fig=reward_fig)
+    save_run_data(V, td_policy, td_reward_history, run_dir, "TD_learning", td_path=td_path_fig, plot_fig=reward_fig)
 
     # Compare path lengths
     print(f"Q-learning path length: {len(q_final_path)}")
     print(f"TD-learning path length: {len(td_final_path)}")
 
-# Execute the experiment
-run_experiment()
+# Execute the experiment and save the results
+run_experiment_and_save()
